@@ -18,7 +18,7 @@ redisClient.on('error', (err) => console.error('Redis Client Error', err));
 
 const STREAM_NAME = 'clicks';
 const GROUP_NAME = 'analytics-group';
-const WORKER_NAME = `worker-${process.pid}`;
+const WORKER_NAME = process.env.WORKER_NAME || 'worker-1';
 
 // 1. Micro HTTP Health Check Server
 function startHealthServer() {
@@ -160,6 +160,7 @@ async function run() {
 
     } catch (err) {
       console.error('Error in event loop:', err);
+      readPending = true;
       if (err.message && err.message.includes('NOGROUP')) {
         console.log('Consumer group or stream missing (possibly due to Redis flush). Recreating group...');
         try {

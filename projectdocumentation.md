@@ -1,81 +1,231 @@
 # Project Documentation
 
-## 1. Project Objective and Scope
+## 1. Main Idea
 
-The **Distributed URL Shortener** is a high-throughput, low-latency web service built from scratch to map long URLs to short, unique codes. The project simulates a production-grade cloud infrastructure, demonstrating core concepts of **distributed systems design**, **caching strategies**, and **asynchronous event-driven processing**.
+SnapURL is a distributed URL shortener that turns a deceptively simple product into a systems-design exercise. The project shows how to build a fast redirect service, how to avoid central ID allocation bottlenecks, and how to track analytics without slowing down the user-facing path.
 
-### Key Deliverables:
-- **Collision-Resistant ID Generators**: Fully decentralized generation without centralized DB serial locks.
-- **Sub-millisecond Redirection**: Utilizes a read-through Redis cache.
-- **Asynchronous Click Analytics**: Coordinated via Redis Streams and a background worker.
-- **Real-Time Data Visualization**: An interactive, glassmorphic single-page dashboard.
+The primary objective is to keep redirects fast while still capturing useful metrics. That is accomplished by combining PostgreSQL, Redis, a background worker, and a compact frontend dashboard.
 
----
+## 2. Project Goals
 
-## 2. Technical Stack and Rationale
+- Generate collision-resistant short codes without auto-increment IDs.
+- Support both hash-based and snowflake-inspired code generation.
+- Resolve redirects with a read-through cache.
+- Publish click events to Redis Streams.
+- Aggregate analytics asynchronously by hour.
+- Render analytics in the browser with a simple chart.
+- Run the whole system locally through Docker Compose.
 
-The technical stack was chosen specifically to solve high-concurrency and high-throughput constraints:
+## 3. Why These Technologies Were Chosen
 
-| Component | Technology | Rationale |
-| :--- | :--- | :--- |
-| **API & Worker** | Node.js (ESM) | Single-threaded non-blocking event-driven model. High throughput for I/O operations and superb integration with asynchronous drivers. ESM is used for native modern module handling. |
-| **Data Cache** | Redis 7 | In-memory key-value store. Provides sub-millisecond read times for hot keys, reducing PostgreSQL query pressure. |
-| **Message Broker**| Redis Streams | A lightweight, fast append-only log structure built directly into Redis. Avoids the operational overhead of RabbitMQ or Kafka. |
-| **Database** | PostgreSQL 15 | A robust, ACID-compliant relational database. Serves as the ultimate source of truth, offering transactional guarantees and advanced indexing. |
-| **Testing** | k6 | A modern developer-centric load testing tool written in Go. Executes high-concurrency requests easily in containerized environments. |
-| **Visualization**| Chart.js | Client-side Canvas chart rendering, offering hardware-accelerated animations and mobile responsiveness. |
+| Technology | Why it fits |
+| --- | --- |
+| Node.js | Good fit for I/O-heavy services, HTTP APIs, and stream processing |
+| Express | Minimal and predictable HTTP routing layer |
+| PostgreSQL | Durable relational store with constraints, indexing, and UPSERT support |
+| Redis | Fast in-memory cache plus built-in stream support |
+| Chart.js | Lightweight visualization layer for hourly click trends |
+| k6 | Practical load testing tool for API benchmarks |
+| Docker Compose | Easiest way to make the whole system reproducible |
 
----
+## 4. Complete Workflow
 
-## 3. Key Modules and Responsibilities
+```mermaid
+flowchart TD
+  A[User submits long URL] --> B[API validates request]
+  B --> C[Generate short code]
+  C --> D[Insert into urls table]
+  D --> E[Return short URL]
+  E --> F[User opens short URL]
+  F --> G[Check Redis cache]
+  G -->|Hit| H[Redirect immediately]
+  G -->|Miss| I[Query PostgreSQL]
+  I --> J[Cache result in Redis]
+  J --> H
+  H --> K[Publish click event to Redis Stream]
+  K --> L[Worker reads stream in batches]
+  L --> M[Aggregate by hour]
+  M --> N[UPSERT analytics_hourly]
+  N --> O[Analytics endpoint returns history]
+```
 
-### 3.1. API Server (`api`)
-- **`src/index.js`**: Initializer script. Configures CORS, mounts endpoints, serves frontend static assets, and connects to Postgres/Redis.
-- **`src/db.js`**: Shared service pool for Postgres and Redis. Implements automatic startup retries to prevent container boot failures.
-- **`src/idGenerator.js`**: Contains Base62 encoding functions, the MD5-based Hash Generator, and the BigInt bit-shifting Snowflake generator.
-- **`src/routes.js`**: Route definitions for:
-  - `POST /api/shorten` (validates payloads, calls generator, handles retries on collision).
-  - `GET /:shortCode` (read-through cache lookups, issues 302 Location redirect, sets `X-Cache-Status` headers, logs clicks to Redis Streams).
-  - `GET /api/analytics/:shortCode` (returns aggregated history).
-  - `GET /api/health` (docker container health verification).
+## 5. Main Modules and Responsibilities
 
-### 3.2. Background Worker (`worker`)
-- **`src/worker.js`**: Continuous stream processor.
-  - Subscribes to the `clicks` stream using a Consumer Group.
-  - Implements PEL (Pending Entries List) check on startup to ensure crash recovery.
-  - Aggregates events hourly to avoid database write fatigue.
-  - Runs batch UPSERTs inside a Postgres transaction block.
-  - Exposes an HTTP status page on port 3001.
+### 5.1 API Service
 
----
+#### `api/src/index.js`
 
-## 4. Problem-Solving Approach
+- Loads environment variables.
+- Sets up Express.
+- Enables CORS and JSON parsing.
+- Serves the static frontend.
+- Waits for database and Redis connections before listening.
 
-### 4.1. Collision Resolution (Hash Strategy)
-To map a 128-bit MD5 digest to an 8-character Base62 short code (48 bits of information space), truncation is required. Truncation can occasionally cause collisions.
-- **Solution**: The database table enforces a `UNIQUE` constraint on the `short_code` column. If a write fails with duplicate key error `23505`, the API server catches the exception, increments the `attempt` counter, appends a salt (e.g. `:1`, `:2`), and recalculates the hash and code. This cycle repeats up to 5 times.
+#### `api/src/routes.js`
 
-### 4.2. Coordination-Free Scaling (Snowflake Strategy)
-Generating unique IDs across multiple API instances without a central lock.
-- **Solution**: Bit-allocation layout:
-  - **41 bits for timestamp**: Allows tracking up to 69 years of milliseconds from a custom epoch.
-  - **10 bits for Node ID**: Passed as an environment variable (allowing 1,024 unique instances to run concurrently without collisions).
-  - **12 bits for sequence**: Handles up to 4,096 generations within the same millisecond. If the sequence exhausts, the generator blocks until the clock ticks to the next millisecond.
+- `GET /api/health`: container readiness.
+- `POST /api/shorten`: validate input, generate short code, write to PostgreSQL.
+- `GET /:shortCode`: cache lookup, DB fallback, click event publication, redirect.
+- `GET /api/analytics/:shortCode`: return aggregated analytics.
+- `GET /analytics/:shortCode`: frontend route for the browser dashboard.
 
-### 4.3. Redis Stream Re-creation on Flush
-Administrative or integration tests may run `FLUSHALL` on Redis, clearing active streams and deleting consumer groups.
-- **Solution**: The worker's event loop catches `NOGROUP` error codes and automatically calls the stream/group initializer dynamically. This ensures that the worker immediately heals itself and resumes event processing.
+#### `api/src/idGenerator.js`
 
----
+- Converts integers to Base62.
+- Implements the MD5-based hash strategy.
+- Implements the snowflake-inspired 64-bit generator.
+- Uses `NODE_ID` from the environment.
 
-## 5. Pros and Cons of the Architecture
+#### `api/src/db.js`
 
-### Advantages (Pros)
-- **High Redirection Throughput**: Served directly from Redis memory in <1ms.
-- **Database Scalability**: By batching and aggregating click counts before writing, PostgreSQL only receives 1 UPSERT query per hour per code, instead of 1 write query per click.
-- **Fail-safe Recovery**: Using Redis Streams Consumer Groups guarantees that if the worker falls behind or crashes, no click events are lost. They are processed from the checkpoint upon worker recovery.
-- **Sleek Client Experience**: Glassmorphism dark mode with animations and real-time history charts.
+- Creates the PostgreSQL pool.
+- Creates the Redis client.
+- Retries startup connections so the container can tolerate slow dependency boot.
 
-### Constraints (Cons)
-- **Aggregated Analytics Delay**: Click logs are aggregated in the background. Analytics endpoints are updated asynchronously every 2-5 seconds rather than showing real-time immediate writes.
-- **Memory Consumption**: If popular URL cache items are not evicted, Redis memory usage could increase. This is mitigated by configuring a 24-hour cache TTL and standard Redis Maxmemory LRU eviction policies.
+### 5.2 Worker Service
+
+#### `worker/src/worker.js`
+
+- Starts a small HTTP health server on port 3001.
+- Connects to PostgreSQL and Redis.
+- Creates or recovers the Redis consumer group.
+- Reads click events in batches.
+- Groups events by `short_code` and hour.
+- Writes aggregates with `INSERT ... ON CONFLICT DO UPDATE`.
+- Acknowledges processed stream messages.
+
+### 5.3 Database Layer
+
+#### `db/init.sql`
+
+- Creates `urls` with a unique short code.
+- Creates `analytics_hourly` with a composite unique key.
+- Adds supporting indexes for common lookups.
+
+## 6. Problem-Solving Approach
+
+### 6.1 Hash-Based ID Generation
+
+The hash strategy is simple and deterministic. The long URL is hashed, truncated to a short numeric space, and encoded in Base62. Because truncation can collide, the API retries with a new attempt value when the unique constraint rejects an insert.
+
+Benefits:
+
+- Stateless at the generator level.
+- Easy to reason about and test.
+- Produces compact, URL-safe codes.
+
+Trade-off:
+
+- The short code space is smaller than the full hash space, so the database constraint is the final guardrail.
+
+### 6.2 Snowflake-Inspired ID Generation
+
+The snowflake-style generator avoids central coordination by packing timestamp, node ID, and sequence into one 64-bit integer. This makes the identifier unique across distributed API instances when node IDs are assigned correctly.
+
+Benefits:
+
+- Independent generation across nodes.
+- Sortable by time.
+- Predictable throughput with clear capacity limits.
+
+Trade-off:
+
+- Requires node ID discipline and clock correctness.
+
+### 6.3 Redis Stream Recovery
+
+If Redis is cleared or the worker restarts, the consumer group may disappear. The worker handles that by recreating the group and re-reading pending messages so click events are not silently dropped.
+
+Benefits:
+
+- Better crash recovery.
+- Protects against stream resets during testing or deployment.
+
+## 7. Data Flow and Execution Flow
+
+### 7.1 URL Creation Flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant F as Frontend
+  participant A as API
+  participant D as DB
+
+  U->>F: Fill form and submit
+  F->>A: POST /api/shorten
+  A->>A: Validate payload and strategy
+  A->>D: Insert urls row
+  D-->>A: Inserted row
+  A-->>F: short_url JSON
+  F-->>U: Display result and analytics link
+```
+
+### 7.2 Redirect and Analytics Flow
+
+```mermaid
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant A as API
+  participant R as Redis
+  participant D as DB
+  participant W as Worker
+
+  U->>A: GET /:shortCode
+  A->>R: Read cache
+  alt cache hit
+    R-->>A: mapping
+  else cache miss
+    A->>D: Query urls
+    D-->>A: row or none
+    opt row found
+      A->>R: Cache mapping
+    end
+  end
+  A->>R: XADD clicks
+  A-->>U: 302 redirect
+  W->>R: XREADGROUP clicks
+  W->>D: UPSERT analytics_hourly
+```
+
+## 8. Advantages and Benefits
+
+- Clean separation between request serving and analytics processing.
+- Low redirect latency through Redis hits.
+- Safe analytics writes through batched UPSERTs.
+- Good local developer experience through Docker Compose.
+- Clear contract surface for automated testing.
+
+## 9. Cons and Limits
+
+- Analytics are eventually consistent, not instantaneous.
+- Redis memory must be managed for larger workloads.
+- Snowflake requires careful node assignment.
+- Hash-based generation still relies on retry logic under collisions.
+
+## 10. Crucial Integration Details
+
+- `api` depends on `db` and `redis` being healthy before startup.
+- `worker` depends on the same services and exposes its own health endpoint.
+- `db/init.sql` runs automatically on first database startup.
+- The frontend calls the API directly and renders charts from `/api/analytics/:shortCode`.
+- The benchmark script uses the same HTTP routes as the browser and is suitable for load testing both read and write paths.
+
+## 11. Validation Strategy
+
+The project should be verified in layers:
+
+1. Start the stack with `docker compose up --build -d`.
+2. Confirm all four services report healthy with `docker compose ps`.
+3. Create short URLs for both strategies.
+4. Confirm redirects return `302` and emit `X-Cache-Status`.
+5. Confirm Redis `clicks` stream entries appear after redirects.
+6. Confirm the worker updates `analytics_hourly`.
+7. Confirm the analytics endpoint returns history and totals.
+8. Run the k6 benchmark script and record results in `BENCHMARK.md`.
+
+## 12. Final Assessment
+
+This architecture is intentionally pragmatic. It is not the most complicated possible design, but it is a strong fit for the problem: fast reads, durable writes, asynchronous analytics, and simple local deployment. That balance is what makes the system understandable, testable, and scalable.

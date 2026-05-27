@@ -1,161 +1,194 @@
-# ⚡ SnapURL — Distributed URL Shortener
+# SnapURL
 
-[![Docker](https://img.shields.io/badge/Docker-Enabled-blue?logo=docker&logoColor=white)](https://www.docker.com/)
-[![Redis](https://img.shields.io/badge/Redis-Cache%20%26%20Streams-red?logo=redis&logoColor=white)](https://redis.io/)
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-Source%20of%20Truth-blue?logo=postgresql&logoColor=white)](https://www.postgresql.org/)
-[![Node.js](https://img.shields.io/badge/Node.js-20.x--alpine-green?logo=node.js&logoColor=white)](https://nodejs.org/)
-[![k6](https://img.shields.io/badge/k6-Load%20Testing-brightgreen?logo=k6&logoColor=white)](https://k6.io/)
+SnapURL is a distributed URL shortener built to demonstrate a clean separation between a low-latency redirect path and an asynchronous analytics pipeline. The project uses PostgreSQL for durable storage, Redis for caching and stream-based event delivery, Node.js for the API and worker services, and a small browser UI for link creation and analytics visualization.
 
-SnapURL is a production-grade, highly scalable distributed URL shortener designed to support high concurrent load. It uses decentralised, collision-resistant ID generation strategies, sub-millisecond read-through caching, and asynchronous event streams to handle billions of redirections daily.
+## Overview
 
----
-
-## 🏗️ System Architecture & Execution Flow
-
-SnapURL splits execution into a **synchronous hotspot path** (designed for sub-millisecond redirection response times) and an **asynchronous cold path** (decoupling analytical write loads).
-
-### Redirection & Cache Resolution Workflow
-When a redirection request is received, the API service checks the caching layer first. If it's a hit, the user is redirected immediately, and a click log is dispatched to a Redis Stream asynchronously.
+The system solves the classic URL-shortening problem in a distributed way. Short codes are generated without auto-increment IDs, redirects are accelerated through a read-through Redis cache, and click analytics are processed out of band by a worker that consumes Redis Streams and writes hourly aggregates into PostgreSQL.
 
 ```mermaid
-graph TD
-    User([Client Request]) -->|GET /:shortCode| API[API Service]
-    API -->|1. Lookup| Cache{Redis Cache}
-    
-    Cache -->|2. Hit| Verify{Expired?}
-    Verify -->|Yes| R404[Return 404]
-    Verify -->|No| Stream[Publish Click Event to Redis Stream]
-    Stream -->|3. Redirect| R302[302 Redirect to Long URL]
-    
-    Cache -->|2. Miss| PG[Query PostgreSQL]
-    PG -->|Not Found / Expired| R404
-    PG -->|Active| WriteCache[Write to Redis Cache with TTL]
-    WriteCache --> Stream
-    
-    style Cache fill:#f9f,stroke:#333,stroke-width:2px
-    style PG fill:#bbf,stroke:#333,stroke-width:2px
+flowchart LR
+  User[Browser / Client] --> API[API Service]
+  API --> Redis[(Redis Cache + Streams)]
+  API --> DB[(PostgreSQL)]
+  Redis --> Worker[Analytics Worker]
+  Worker --> DB
+  API --> UI[Frontend SPA]
 ```
 
-### Asynchronous Analytics & Aggregation Workflow
-A background worker consumes events from the click stream in batches and aggregates them hourly in memory before committing changes to the database.
+## Tech Stack
+
+| Layer | Technology | Purpose |
+| --- | --- | --- |
+| API | Node.js + Express | REST endpoints, redirects, analytics, and static asset hosting |
+| Worker | Node.js | Consumes click events from Redis Streams and updates analytics |
+| Database | PostgreSQL 15 | Persistent source of truth for URL mappings and aggregates |
+| Cache / Broker | Redis 7 | Read-through cache and click-event stream |
+| Frontend | HTML, CSS, Vanilla JS, Chart.js | URL shortening form and analytics visualization |
+| Benchmarking | k6 | Load and latency testing under concurrent access |
+| Orchestration | Docker Compose | Local, reproducible multi-service runtime |
+
+## How It Works
+
+### Redirect Workflow
 
 ```mermaid
-graph LR
-    Stream[Redis Stream: clicks] -->|1. Consume Batch| Worker[Analytics Worker]
-    Worker -->|2. Hourly Aggregation| Agg[In-Memory Counts]
-    Agg -->|3. Batch UPSERT| PG[(PostgreSQL Database)]
-    PG -->|4. Acknowledge| Stream
+sequenceDiagram
+  autonumber
+  participant C as Client
+  participant A as API
+  participant R as Redis
+  participant P as PostgreSQL
+  participant S as Redis Stream
+
+  C->>A: GET /:shortCode
+  A->>R: Read cache key
+  alt Cache hit
+    R-->>A: original_url + expires_at
+  else Cache miss
+    A->>P: Lookup short_code
+    P-->>A: Row or not found
+    opt Row found
+      A->>R: Populate cache with TTL
+    end
+  end
+  alt URL exists and not expired
+    A->>S: XADD clicks {short_code, timestamp}
+    A-->>C: 302 redirect + X-Cache-Status
+  else Missing or expired
+    A-->>C: 404 Not Found
+  end
 ```
 
----
+### Analytics Workflow
 
-## 🛠️ Technology Stack
-
-SnapURL relies on standard systems tools to maintain low footprint and high scalability:
-- **Backend Services**: Node.js (ESM), Express.
-- **Database (Source of Truth)**: PostgreSQL 15 (supporting transactions and indices).
-- **Speed & Queue Layer**: Redis 7 (utilising caching keys and Redis Streams with Consumer Groups).
-- **Frontend SPA**: Vanilla HTML5, modern HSL CSS variables, glassmorphic UI, and Chart.js.
-- **Benchmarking**: k6 load generator.
-- **Orchestration**: Docker and docker-compose.
-
----
-
-## 📂 Codebase & Folder Organization
-
+```mermaid
+flowchart TD
+  Stream[Redis Stream: clicks] --> Group[Consumer Group]
+  Group --> Batch[Batch Read Events]
+  Batch --> Aggregate[Group by short_code + hour]
+  Aggregate --> Upsert[UPSERT analytics_hourly]
+  Upsert --> Ack[XACK processed IDs]
 ```
+
+## Folder Organization
+
+```text
 Gpp-20/
 ├── api/
-│   ├── public/              # Static Frontend SPA Assets
-│   │   ├── index.html       # Sleek UI Dashboard with Chart.js
-│   │   └── style.css        # Glassmorphic Dark-Mode Stylesheet
-│   ├── src/                 # API Server Source Code
-│   │   ├── db.js            # Redis and Postgres DB connection pool
-│   │   ├── idGenerator.js   # Hash and Snowflake ID generators
-│   │   ├── index.js         # Express app entrypoint
-│   │   └── routes.js        # API endpoints and redirection handlers
 │   ├── Dockerfile
-│   └── package.json
+│   ├── package.json
+│   ├── public/
+│   │   ├── index.html
+│   │   └── style.css
+│   └── src/
+│       ├── db.js
+│       ├── idGenerator.js
+│       ├── index.js
+│       └── routes.js
 ├── worker/
-│   ├── src/
-│   │   └── worker.js        # Background event processor loop
 │   ├── Dockerfile
-│   └── package.json
+│   ├── package.json
+│   └── src/
+│       └── worker.js
 ├── db/
-│   └── init.sql             # Postgres DDL seeding script
-├── .env.example             # Template for local environment vars
-├── docker-compose.yml       # Docker services configuration
-├── k6.js                    # Load test script
-├── BENCHMARK.md             # k6 benchmarking report
-├── architecture.md          # Architectural and layout diagrams
-├── projectdocumentation.md   # Product documentation
-└── README.md                # System overview and startup manual
+│   └── init.sql
+├── docker-compose.yml
+├── k6.js
+├── BENCHMARK.md
+├── architecture.md
+├── projectdocumentation.md
+├── README.md
+└── .env.example
 ```
 
----
+## Local Setup
 
-## 🚀 Running the Project Locally
+### Prerequisites
 
-### 1. Prerequisites
-Ensure you have the following installed:
-- [Docker & Docker Compose](https://www.docker.com/products/docker-desktop)
-- [Git](https://git-scm.com/)
+- Docker Desktop or Docker Engine with Compose support
+- Git
 
-### 2. Setup and Installation
-Clone the repository and spin up the containerized network:
+### Installation and Startup
 
 ```bash
-# Clone the repository
-git clone https://github.com/ramalokeshreddyp/distributed-url-shortener.git
-cd distributed-url-shortener
-
-# Build and start all services in detached mode
-docker-compose up --build -d
+git clone <repository-url>
+cd Gpp-20
+docker compose up --build -d
+docker compose ps
 ```
 
-Verify that all containers (`api`, `worker`, `db`, `redis`) start and show a healthy status:
+The compose file starts four services: `api`, `worker`, `db`, and `redis`. The database is seeded automatically from [db/init.sql](db/init.sql), and healthchecks gate startup so the application only begins once the dependencies are ready.
 
-```bash
-docker-compose ps
-```
+### Environment Variables
 
-### 3. Usage Instructions
+Copy [.env.example](.env.example) to your local environment if you want to run the services outside Compose. The most important variables are `DATABASE_URL`, `REDIS_URL`, `PORT`, `BASE_URL`, `NODE_ID`, and `WORKER_NAME`.
 
-#### Accessing the UI
-Open your browser and navigate to **[http://localhost:3000](http://localhost:3000)**. 
-- Enter a long URL, select the generation strategy (Hash or Snowflake), and set an optional expiration date.
-- Click **Generate Short Link**.
-- Copy the short URL and test redirecting by pasting it into a new tab.
-- Click **View Analytics Dashboard** to view a real-time Chart.js time-series analysis of click volume.
+## Usage
 
-#### Testing REST Endpoints
+### Frontend
 
-**Shorten a URL (Hash Strategy)**:
+Open `http://localhost:3000`.
+
+- Enter a long URL.
+- Select `hash` or `snowflake`.
+- Optionally set an expiration timestamp.
+- Click the shorten button.
+- Copy the returned short URL and open the analytics view from the link shown in the result panel.
+
+### API Examples
+
 ```bash
 curl -X POST http://localhost:3000/api/shorten \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://www.google.com/search?q=distributed+systems", "strategy": "hash"}'
+  -d '{"url":"https://www.google.com/search?q=distributed+systems","strategy":"hash"}'
 ```
 
-**Shorten a URL (Snowflake Strategy + Expiration)**:
 ```bash
 curl -X POST http://localhost:3000/api/shorten \
   -H "Content-Type: application/json" \
-  -d '{"url": "https://en.wikipedia.org/wiki/Snowflake_ID", "strategy": "snowflake", "expires_at": "2027-01-01T00:00:00Z"}'
+  -d '{"url":"https://en.wikipedia.org/wiki/Snowflake_ID","strategy":"snowflake","expires_at":"2027-01-01T00:00:00Z"}'
 ```
 
-**Query Analytics**:
 ```bash
 curl http://localhost:3000/api/analytics/<shortCode>
 ```
 
----
-
-## 📊 Performance Testing
-
-Run the benchmark suite using `k6` to see how the system performs under load:
+### Redirect Verification
 
 ```bash
-docker run --rm -i --network="gpp-20_shortener-network" -v "${pwd}:/apps" -e BASE_URL="http://api:3000" -e STRATEGY="snowflake" grafana/k6 run /apps/k6.js
+curl -I -L --max-redirs 0 http://localhost:3000/<shortCode>
 ```
-*Note: Check out [BENCHMARK.md](BENCHMARK.md) to view the performance metrics comparison.*
+
+Check for the `Location` header and the `X-Cache-Status` response header.
+
+## Benchmarking
+
+Run the included k6 script against the API service:
+
+```bash
+docker run --rm -i \
+  --network="gpp-20_shortener-network" \
+  -v "${pwd}:/apps" \
+  -e BASE_URL="http://api:3000" \
+  -e STRATEGY="snowflake" \
+  grafana/k6 run /apps/k6.js
+```
+
+Results and analysis belong in [BENCHMARK.md](BENCHMARK.md).
+
+## Verification Checklist
+
+- `docker compose up --build -d` starts all four services.
+- [db/init.sql](db/init.sql) creates the required tables and constraints.
+- `POST /api/shorten` returns a short URL for both strategies.
+- `GET /:shortCode` redirects with cache hit/miss headers.
+- Redis publishes click events to the `clicks` stream.
+- The worker updates `analytics_hourly` asynchronously.
+- `GET /api/analytics/:shortCode` returns the hourly time series.
+
+## Documentation Map
+
+- [architecture.md](architecture.md) contains the full system architecture, component responsibilities, and design trade-offs.
+- [projectdocumentation.md](projectdocumentation.md) contains the deep technical narrative, problem-solving approach, advantages, and limitations.
+- [BENCHMARK.md](BENCHMARK.md) records load-test findings and performance analysis.

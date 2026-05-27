@@ -217,7 +217,7 @@
       gradient.addColorStop(1, 'rgba(168, 85, 247, 0.05)');
 
       analyticsChart = new Chart(ctx, {
-        type: 'line',
+        type: 'bar',
         data: {
           labels: labels.length > 0 ? labels : ['No clicks recorded yet'],
           datasets: [{
@@ -226,8 +226,6 @@
             borderColor: '#6366f1',
             borderWidth: 3,
             backgroundColor: gradient,
-            fill: true,
-            tension: 0.4,
             pointBackgroundColor: '#a855f7',
             pointBorderColor: '#ffffff',
             pointHoverRadius: 7,

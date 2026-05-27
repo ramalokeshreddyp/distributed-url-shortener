@@ -1,6 +1,6 @@
 # Benchmark & Performance Analysis Report
 
-This report details the load testing and performance benchmarks for the Distributed URL Shortener under concurrent load. The benchmark was executed using `k6` in a containerized environment with 50 concurrent virtual users (VUs) for a duration of 1 minute.
+This report details the load testing and performance benchmarks for the Distributed URL Shortener under concurrent load. The benchmark was executed using `k6` in a containerized environment with 50 concurrent virtual users (VUs) for a duration of 1 minute. Results depend on host hardware, Docker resource allocation, and network conditions, so the values below should be treated as representative of the captured run.
 
 ---
 
