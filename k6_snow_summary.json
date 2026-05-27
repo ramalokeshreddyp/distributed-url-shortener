@@ -1,0 +1,186 @@
+{
+    "metrics": {
+        "data_received": {
+            "count": 7819962,
+            "rate": 129858.26445620187
+        },
+        "checks": {
+            "passes": 73504,
+            "fails": 2,
+            "value": 0.9999727913367616
+        },
+        "http_req_tls_handshaking": {
+            "avg": 0,
+            "min": 0,
+            "med": 0,
+            "max": 0,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_failed": {
+            "passes": 1,
+            "fails": 20439,
+            "value": 0.00004892367906066536
+        },
+        "vus": {
+            "max": 50,
+            "value": 1,
+            "min": 1
+        },
+        "vus_max": {
+            "value": 50,
+            "min": 50,
+            "max": 50
+        },
+        "http_req_waiting": {
+            "avg": 9.580610220743607,
+            "min": 0,
+            "med": 3.1111139999999997,
+            "max": 167.983803,
+            "p(90)": 24.681403800000023,
+            "p(95)": 43.43485439999998
+        },
+        "http_req_duration{expected_response:true}": {
+            "min": 0.034928,
+            "med": 3.220431,
+            "max": 168.123568,
+            "p(90)": 24.971732800000005,
+            "p(95)": 43.690133199999806,
+            "avg": 9.743418394246254
+        },
+        "iterations": {
+            "count": 20420,
+            "rate": 339.09445598273265
+        },
+        "http_reqs": {
+            "count": 20440,
+            "rate": 339.4265759200321
+        },
+        "http_req_connecting": {
+            "avg": 0.0010803596868884542,
+            "min": 0,
+            "med": 0,
+            "max": 3.686232,
+            "p(90)": 0,
+            "p(95)": 0
+        },
+        "http_req_sending": {
+            "p(90)": 0.09147700000000002,
+            "p(95)": 0.14970819999999985,
+            "avg": 0.04835415738747532,
+            "min": 0.002285,
+            "med": 0.016022500000000002,
+            "max": 8.201816
+        },
+        "iteration_duration": {
+            "avg": 110.63874570612221,
+            "min": 100.702111,
+            "med": 104.0474095,
+            "max": 269.538594,
+            "p(90)": 126.06577090000002,
+            "p(95)": 144.93666925
+        },
+        "http_req_blocked": {
+            "min": 0.00086,
+            "med": 0.005219,
+            "max": 7.741646,
+            "p(90)": 0.027798300000000005,
+            "p(95)": 0.033558749999999984,
+            "avg": 0.012918400146771035
+        },
+        "http_req_receiving": {
+            "med": 0.07421849999999999,
+            "max": 6.215191,
+            "p(90)": 0.18678330000000012,
+            "p(95)": 0.2998305499999998,
+            "avg": 0.114127360176125,
+            "min": 0.009084
+        },
+        "http_req_duration": {
+            "p(95)": 43.6833295999999,
+            "avg": 9.7430917383072,
+            "min": 0.034928,
+            "med": 3.2204015,
+            "max": 168.123568,
+            "p(90)": 24.97096390000002
+        },
+        "data_sent": {
+            "count": 2064150,
+            "rate": 34277.2684288324
+        }
+    },
+    "setup_data": {
+        "shortCodes": [
+            "3ULEbficX6",
+            "3ULEbgZNJu",
+            "3ULEbi8cfK",
+            "3ULEbjybU4",
+            "3ULEbkYbyo",
+            "3ULEbmFMkM",
+            "3ULEbqEa9G",
+            "3ULEbuU96E",
+            "3ULEbwBJT2",
+            "3ULEby1Jxm",
+            "3ULEbA0VrO",
+            "3ULEbC07mg",
+            "3ULEbDq70A",
+            "3ULEbFpiV2",
+            "3ULEbH6THq",
+            "3ULEbIwTlK",
+            "3ULEbKeu88",
+            "3ULEbLEtMs",
+            "3ULEbSbfLW",
+            "3ULEbTBfqg"
+        ]
+    },
+    "root_group": {
+        "name": "",
+        "path": "",
+        "id": "d41d8cd98f00b204e9800998ecf8427e",
+        "groups": {},
+        "checks": {
+                "redirect is 302": {
+                    "name": "redirect is 302",
+                    "path": "::redirect is 302",
+                    "id": "bcc9dbd7f2d7e765da392b0e167fa713",
+                    "passes": 16333,
+                    "fails": 0
+                },
+                "has Location header": {
+                    "name": "has Location header",
+                    "path": "::has Location header",
+                    "id": "a5bcc5a2a32157f0e3dcaa526ac76eaa",
+                    "passes": 16333,
+                    "fails": 0
+                },
+                "has X-Cache-Status": {
+                    "id": "041119085a21613b7f98ef0eaf66a978",
+                    "passes": 16333,
+                    "fails": 0,
+                    "name": "has X-Cache-Status",
+                    "path": "::has X-Cache-Status"
+                },
+                "cache hit or miss": {
+                    "name": "cache hit or miss",
+                    "path": "::cache hit or miss",
+                    "id": "5a9bfb751f833b5aa60cc8dbfbae58ac",
+                    "passes": 16333,
+                    "fails": 0
+                },
+                "shorten is 201": {
+                    "name": "shorten is 201",
+                    "path": "::shorten is 201",
+                    "id": "565a45e871c1733484dce83e95a6ddc8",
+                    "passes": 4086,
+                    "fails": 1
+                },
+                "has short_url": {
+                    "path": "::has short_url",
+                    "id": "1db9b9017ce9140b28ed86724496fe2f",
+                    "passes": 4086,
+                    "fails": 1,
+                    "name": "has short_url"
+                }
+            }
+    }
+}

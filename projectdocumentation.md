@@ -229,3 +229,79 @@ The project should be verified in layers:
 ## 12. Final Assessment
 
 This architecture is intentionally pragmatic. It is not the most complicated possible design, but it is a strong fit for the problem: fast reads, durable writes, asynchronous analytics, and simple local deployment. That balance is what makes the system understandable, testable, and scalable.
+
+## 13. API Reference (brief)
+
+- `GET /api/health` — returns 200 when the API is ready.
+- `POST /api/shorten` — JSON body `{ url, strategy, expires_at? }`; returns `201` with `{ short_url, short_code }` on success. Strategies: `hash` or `snowflake`.
+- `GET /:shortCode` — redirect endpoint. Returns `302` with `Location` and `X-Cache-Status` header.
+- `GET /api/analytics/:shortCode` — returns `{ total_clicks, history }` where `history` is an array of `{ hour, clicks }`.
+
+## 14. Environment & Configuration
+
+Important env vars (see `.env.example`):
+
+- `DATABASE_URL` — Postgres connection string
+- `REDIS_URL` — Redis connection string
+- `BASE_URL` — Public base URL (used to build short URL responses)
+- `NODE_ID` — numeric node ID for Snowflake generator
+- `WORKER_NAME` — name for the worker consumer instance
+
+## 15. Database Schema (reference)
+
+`urls` table (excerpt):
+
+```sql
+CREATE TABLE urls (
+  id SERIAL PRIMARY KEY,
+  short_code VARCHAR(32) UNIQUE NOT NULL,
+  original_url TEXT NOT NULL,
+  strategy VARCHAR(16) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NULL
+);
+```
+
+`analytics_hourly` table (excerpt):
+
+```sql
+CREATE TABLE analytics_hourly (
+  id SERIAL PRIMARY KEY,
+  short_code VARCHAR(32) NOT NULL,
+  hour TIMESTAMPTZ NOT NULL,
+  click_count INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(short_code, hour)
+);
+```
+
+## 16. Redis Stream Tips
+
+- Inspect stream length: `XLEN clicks`.
+- Read entries: `XREAD COUNT 10 STREAMS clicks 0`.
+- Consumer group info: `XINFO GROUPS clicks` and `XPENDING clicks analytics-group`.
+
+## 17. Testing Strategy
+
+- Unit tests: validate ID generator edge cases, Base62 encoding, and DB helper logic.
+- Integration tests: spin up the Docker Compose stack and run smoke tests for shorten -> redirect -> analytics end-to-end.
+- Load tests: `k6.js` provides a realistic mix of reads/writes; analyze `BENCHMARK.md` after runs.
+
+## 18. Verification Checklist (detailed)
+
+1. Start stack: `docker compose up --build -d`.
+2. Confirm health: `docker compose ps` and `curl http://localhost:3000/api/health`.
+3. Create a short URL: `POST /api/shorten` with both strategies.
+4. Confirm redirect: `curl -I -L --max-redirs 0 http://localhost:3000/<shortCode>`; check `Location` and `X-Cache-Status`.
+5. Inspect Redis stream: `redis-cli XREAD COUNT 5 STREAMS clicks 0` after performing redirects.
+6. Verify worker processing: check logs and ensure `analytics_hourly` table has upserted rows.
+7. Run `k6` and compare metrics recorded in `BENCHMARK.md`.
+
+## 19. Next Steps & Hardening
+
+- Harden security: input validation, authentication for administrative endpoints, rate limiting.
+- Improve analytics durability for extreme retention by integrating Kafka or persistent object storage for event archives.
+- Add automated E2E tests (Playwright) for the frontend flow.
+
+---
+
+End of project documentation.

@@ -243,3 +243,54 @@ The system is designed to survive common failure modes:
 ## 10. Why This Structure Scales
 
 The architecture scales because the hot path is kept small and the expensive work is deferred. Redis absorbs read pressure, PostgreSQL stores the source of truth, and the worker performs write-heavy analytics out of band. This prevents a redirect spike from turning into a database bottleneck.
+
+## 11. Deployment Topology and Scaling
+
+```mermaid
+graph TD
+    LB[Load Balancer] --> APIS[API fleet (multiple nodes)]
+    APIS --> RedisCluster[(Redis Cluster)]
+    APIS --> PostgresPrimary[(Postgres Primary)]
+    PostgresPrimary --> PostgresReplicas[(Read Replicas)]
+    WorkerFleet[Worker fleet] --> RedisCluster
+    WorkerFleet --> PostgresPrimary
+    CDN[CDN / Edge Cache] --> APIS
+```
+
+- Typical production setup: multiple API replicas behind a load balancer, a Redis cluster for sharding/scale, one Postgres primary with read replicas, and autoscaling worker instances consuming the stream.
+- Use PgBouncer between API/worker and Postgres to limit connections.
+
+## 12. Monitoring and Operational Concerns
+
+- Metrics to collect:
+    - API: request latency (p50/p95/p99), error rates, cache hit ratio, DB query latency.
+    - Redis: memory usage, stream length, AOF lag, client connections.
+    - Worker: consumer lag (PEL size), batch processing time, retry rates.
+    - Postgres: replication lag, slow queries, connection count.
+
+- Alerts:
+    - Redis stream length grows beyond threshold (indicates worker lag).
+    - Postgres replication lag > acceptable window.
+    - High `http_req_failed` or steady 5xx rate.
+
+## 13. Security Considerations
+
+- Sanitize and validate user-submitted URLs (avoid SSRF and open-redirect abuses).
+- Rate-limit the shorten endpoint to prevent abuse and mass link generation.
+- Protect administrative endpoints with authentication.
+- Use TLS in production for all external endpoints and internal service communication where possible.
+
+## 14. Operational Runbooks (short)
+
+- Recovering a stalled worker:
+    1. Check worker logs for errors and restart the container.
+    2. Use `XINFO GROUPS clicks` and `XPENDING clicks analytics-group` to inspect pending entries.
+    3. If a consumer crashed holding pending entries, use `XAUTOCLAIM` or `XCLAIM` to move entries to a running consumer.
+
+- Recreating consumer group after Redis reset:
+    1. Worker will try to recreate the group on startup (see `worker/src/worker.js`).
+    2. If you must rebuild: `XGROUP CREATE clicks analytics-group $ MKSTREAM`.
+
+---
+
+End of architecture notes.
