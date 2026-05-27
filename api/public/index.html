@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SnapURL - Distributed & Scalable URL Shortener</title>
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="/style.css">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <header>
+      <div class="logo">SnapURL <span class="logo-dot"></span></div>
+      <p class="subtitle">High-performance, distributed url shortener with real-time analytics</p>
+    </header>
+
+    <!-- Main Views Card -->
+    <main class="glass-card">
+      
+      <!-- Shortener View -->
+      <div id="shortener-view">
+        <form id="shorten-form">
+          <div class="form-group">
+            <label for="url-input">Original Long URL</label>
+            <input 
+              type="url" 
+              id="url-input" 
+              data-testid="url-input" 
+              placeholder="https://example.com/very-long-and-complex-url-path" 
+              required
+            >
+          </div>
+
+          <div class="form-row">
+            <div class="form-group">
+              <label for="strategy-select">ID Generation Strategy</label>
+              <select id="strategy-select" data-testid="strategy-select">
+                <option value="hash">Hash-based (MD5 + Salt)</option>
+                <option value="snowflake">Snowflake-inspired (Distributed 64-bit)</option>
+              </select>
+            </div>
+
+            <div class="form-group">
+              <label for="expires-at">Expiration Date (Optional)</label>
+              <input type="datetime-local" id="expires-at">
+            </div>
+          </div>
+
+          <button type="submit" id="shorten-button" data-testid="shorten-button" class="btn-primary">
+            <span class="spinner" id="btn-spinner"></span>
+            <span id="btn-text">Generate Short Link</span>
+          </button>
+        </form>
+
+        <!-- Result Display Area -->
+        <div id="result-container" class="result-panel" style="display: none;">
+          <div class="result-header">Your shortened URL is ready:</div>
+          <div class="result-content">
+            <div id="result-display" data-testid="result-display" class="result-url"></div>
+            <button id="copy-button" class="copy-btn">Copy</button>
+          </div>
+          <div class="action-links">
+            <a href="#" id="view-analytics-link" class="analytics-link">
+              View Analytics Dashboard &rarr;
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Analytics View -->
+      <div id="analytics-view" class="analytics-view">
+        <div class="analytics-header">
+          <div>
+            <h2 id="analytics-title" style="font-size: 1.5rem; font-weight: 700;">Analytics Dashboard</h2>
+            <p id="analytics-subtitle" style="color: var(--text-secondary); font-size: 0.9rem; word-break: break-all; margin-top: 0.25rem;"></p>
+          </div>
+          <a href="/" id="back-to-shortener" class="back-btn">&larr; Back</a>
+        </div>
+
+        <div class="stats-grid">
+          <div class="stat-card">
+            <div class="stat-label">Total Clicks</div>
+            <div id="stat-clicks" class="stat-value">0</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Status</div>
+            <div class="stat-value" style="font-size: 1.8rem; color: #10b981;">Active</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-label">Short Code</div>
+            <div id="stat-code" class="stat-value" style="font-size: 1.8rem; font-family: monospace;">-</div>
+          </div>
+        </div>
+
+        <div class="chart-card">
+          <div class="chart-title">Click Volume Over Time (Hourly)</div>
+          <div class="chart-container">
+            <canvas id="analytics-chart" data-testid="analytics-chart"></canvas>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">Link copied successfully!</div>
+
+  <!-- Client side logic -->
+  <script>
+    const shortenerView = document.getElementById('shortener-view');
+    const analyticsView = document.getElementById('analytics-view');
+    const shortenForm = document.getElementById('shorten-form');
+    const urlInput = document.getElementById('url-input');
+    const strategySelect = document.getElementById('strategy-select');
+    const expiresAtInput = document.getElementById('expires-at');
+    const resultContainer = document.getElementById('result-container');
+    const resultDisplay = document.getElementById('result-display');
+    const copyButton = document.getElementById('copy-button');
+    const viewAnalyticsLink = document.getElementById('view-analytics-link');
+    const backToShortener = document.getElementById('back-to-shortener');
+    const toast = document.getElementById('toast');
+    const btnSpinner = document.getElementById('btn-spinner');
+    const btnText = document.getElementById('btn-text');
+
+    let currentShortCode = '';
+    let analyticsChart = null;
+
+    // Toast message helper
+    function showToast(message, isError = false) {
+      toast.textContent = message;
+      if (isError) {
+        toast.classList.add('toast-error');
+      } else {
+        toast.classList.remove('toast-error');
+      }
+      toast.classList.add('show');
+      setTimeout(() => {
+        toast.classList.remove('show');
+      }, 3000);
+    }
+
+    // View router
+    function navigateTo(path, updateState = true) {
+      if (updateState) {
+        window.history.pushState({}, '', path);
+      }
+
+      const analyticsMatch = path.match(/^\/analytics\/([a-zA-Z0-9]+)$/);
+      if (analyticsMatch) {
+        const shortCode = analyticsMatch[1];
+        showAnalyticsView(shortCode);
+      } else {
+        showShortenerView();
+      }
+    }
+
+    function showShortenerView() {
+      analyticsView.style.display = 'none';
+      shortenerView.style.display = 'block';
+    }
+
+    async function showAnalyticsView(shortCode) {
+      shortenerView.style.display = 'none';
+      analyticsView.style.display = 'flex';
+      
+      document.getElementById('stat-code').textContent = shortCode;
+      document.getElementById('analytics-subtitle').textContent = `shortCode: ${shortCode}`;
+
+      try {
+        const res = await fetch(`/api/analytics/${shortCode}`);
+        if (!res.ok) {
+          throw new Error(res.status === 404 ? 'Short URL not found in analytics database' : 'Failed to fetch analytics');
+        }
+        const data = await res.json();
+        
+        // Update stats
+        document.getElementById('stat-clicks').textContent = data.total_clicks;
+
+        // Render chart
+        renderChart(data.history);
+      } catch (err) {
+        showToast(err.message, true);
+        console.error(err);
+      }
+    }
+
+    function renderChart(history) {
+      if (analyticsChart) {
+        analyticsChart.destroy();
+      }
+
+      const canvas = document.getElementById('analytics-chart');
+      const ctx = canvas.getContext('2d');
+
+      // Sort history chronologically just in case
+      history.sort((a, b) => new Date(a.hour) - new Date(b.hour));
+
+      const labels = history.map(item => {
+        const date = new Date(item.hour);
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + 
+               ' ' + 
+               date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+      });
+      const dataValues = history.map(item => item.clicks);
+
+      // Create neon gradient
+      const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+      gradient.addColorStop(0, 'rgba(99, 102, 241, 0.4)');
+      gradient.addColorStop(1, 'rgba(168, 85, 247, 0.05)');
+
+      analyticsChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+          labels: labels.length > 0 ? labels : ['No clicks recorded yet'],
+          datasets: [{
+            label: 'Clicks',
+            data: dataValues.length > 0 ? dataValues : [0],
+            borderColor: '#6366f1',
+            borderWidth: 3,
+            backgroundColor: gradient,
+            fill: true,
+            tension: 0.4,
+            pointBackgroundColor: '#a855f7',
+            pointBorderColor: '#ffffff',
+            pointHoverRadius: 7,
+            pointRadius: labels.length > 0 ? 4 : 0
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { display: false }
+          },
+          scales: {
+            y: {
+              beginAtZero: true,
+              grid: { color: 'rgba(255, 255, 255, 0.05)' },
+              ticks: { 
+                color: '#9ca3af',
+                stepSize: 1
+              }
+            },
+            x: {
+              grid: { display: false },
+              ticks: { color: '#9ca3af' }
+            }
+          }
+        }
+      });
+    }
+
+    // Submit handler
+    shortenForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const url = urlInput.value.trim();
+      const strategy = strategySelect.value;
+      const expiresAt = expiresAtInput.value ? new Date(expiresAtInput.value).toISOString() : null;
+
+      btnSpinner.style.display = 'inline-block';
+      btnText.textContent = 'Generating...';
+      document.getElementById('shorten-button').disabled = true;
+
+      try {
+        const res = await fetch('/api/shorten', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url, strategy, expires_at: expiresAt })
+        });
+
+        if (!res.ok) {
+          const errData = await res.json();
+          throw new Error(errData.error || 'Something went wrong');
+        }
+
+        const data = await res.json();
+        const shortUrl = data.short_url;
+
+        // Display results
+        resultDisplay.textContent = shortUrl;
+        resultContainer.style.display = 'flex';
+        
+        // Extract short code from short URL
+        currentShortCode = shortUrl.split('/').pop();
+
+        showToast('Link generated successfully!');
+      } catch (err) {
+        showToast(err.message, true);
+      } finally {
+        btnSpinner.style.display = 'none';
+        btnText.textContent = 'Generate Short Link';
+        document.getElementById('shorten-button').disabled = false;
+      }
+    });
+
+    // Copy to clipboard
+    copyButton.addEventListener('click', () => {
+      const urlText = resultDisplay.textContent;
+      navigator.clipboard.writeText(urlText).then(() => {
+        showToast('Link copied to clipboard!');
+      }).catch(err => {
+        console.error('Copy failed:', err);
+        showToast('Failed to copy link', true);
+      });
+    });
+
+    // View analytics page links
+    viewAnalyticsLink.addEventListener('click', (e) => {
+      e.preventDefault();
+      if (currentShortCode) {
+        navigateTo(`/analytics/${currentShortCode}`);
+      }
+    });
+
+    backToShortener.addEventListener('click', (e) => {
+      e.preventDefault();
+      navigateTo('/');
+    });
+
+    // Handle history back/forward buttons
+    window.addEventListener('popstate', () => {
+      navigateTo(window.location.pathname, false);
+    });
+
+    // Initial load
+    navigateTo(window.location.pathname, false);
+
+  </script>
+</body>
+</html>
